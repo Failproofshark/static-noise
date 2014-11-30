@@ -1,0 +1,253 @@
+(in-package :cl-user)
+
+(defpackage :static-noise
+  (:use :cl
+        :cl-ppcre
+        :cl-who
+        :djula
+        :cl-fad
+        :cl-markdown
+        :hunchentoot
+        :local-time)
+  (:shadowing-import-from :djula :url-encode))
+(in-package :static-noise)
+
+(defvar *blog-directory* 'nil)
+(defvar *article-template* 'nil)
+(defvar *archive-template* 'nil)
+(defvar *page-template* 'nil)
+(defvar *server* (make-instance 'acceptor :port 8080))
+
+(defun copy-directory (from-directory to-directory)
+  (ensure-directories-exist to-directory)
+  (walk-directory from-directory
+                  #'(lambda (original-file)
+                      (let* ((sub-directory-split (split (namestring from-directory) (namestring original-file)))
+                             (partial-path (if (> (- (length sub-directory-split) 1) 0)
+                                               (nth (- (length sub-directory-split) 1) sub-directory-split)
+                                               'nil)))
+                        (when partial-path
+                            (if (and (directory-pathname-p partial-path)
+                                     (not (string= partial-path "/")))
+                                (ensure-directories-exist (merge-pathnames-as-directory to-directory partial-path))
+                                (copy-file original-file (merge-pathnames-as-file to-directory partial-path) :overwrite t)))))
+                  :directories :breadth-first))
+
+(defun set-template-files (&key article archive page)
+  (when (and article archive page)
+    (progn
+      (setf *article-template* article)
+      (setf *archive-template* archive)
+      (setf *page-template* page))))
+
+(defun set-blog-paths (blog-directory)
+  (setf *blog-directory* blog-directory)
+  (add-template-directory (merge-pathnames-as-directory blog-directory "templates/"))
+  (setf (acceptor-document-root *server*) (merge-pathnames-as-directory blog-directory "rendered/")))
+
+;;for configuration purposes
+(defmacro :templates (&key article archive page)
+  `(set-template-files :article ,article
+                       :archive ,archive
+                       :page ,page))
+
+(defun open-blog (blog-directory)
+  (if (file-exists-p (merge-pathnames-as-file blog-directory "config.lisp"))
+      (progn
+        (set-blog-paths blog-directory)
+        (load (merge-pathnames-as-file blog-directory "config.lisp")))
+      (format t "No configuration file found")))
+
+(defun create-blog (blog-directory-root)
+  (ensure-directories-exist blog-directory-root)
+  (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "templates/"))
+  (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "content/"))
+  (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "static/"))
+  (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "pages/"))
+  (with-open-file (new-config-file (merge-pathnames-as-file blog-directory-root "config.lisp")
+                                   :direction :output
+                                   :if-exists 'nil
+                                   :if-does-not-exist :create)
+    (print '(:templates :article "article.html" :archive "archive.html" :page "page.html") new-config-file))
+  (open-blog blog-directory-root))
+
+(defun start-dev-server ()
+  (start *server*))
+
+(defun stop-dev-server ()
+  (stop *server*))
+
+;; This extension forces cl-markdown to ignore our metadata
+(defsimple-extension metadata
+  "")
+
+;; split-date-components timestamp => list
+;; Returns a list of date components from a given timestamp day month year
+(defun split-date-components (timestamp)
+  (list :day (timestamp-day timestamp)
+        :month (timestamp-month timestamp)
+        :year (timestamp-year timestamp)))
+
+;; render-page path-specifier path-specifier stream &optional extra-environment-variables => string
+;; Given a path specifier to the template and related markdown content
+;; produce a plist with the metacontent and the rendered page output as a plain string
+(defun render-page (template-file-name stream &key content-path extra-environment-variables)
+  (let ((input-content-string (make-string-output-stream)))
+    (if content-path
+        (markdown content-path :stream input-content-string))
+    (apply #'render-template* 
+           (append (list (compile-template* template-file-name)
+                         stream)
+                   (if content-path
+                       `(:content ,(get-output-stream-string input-content-string)))
+                   extra-environment-variables))))
+
+;; create-article-listing => array
+;; Returns a list of plists containing a list of articles, their path name and their associated meta data
+;; sorted by the date they were created
+(defun create-article-listing (blog-directory)
+    (flet ((split-date (date-string) (split "-" (regex-replace-all "\\s" date-string ""))))
+      (let ((temp-list (sort (map 'list
+                                  (lambda (content-file-path)
+                                    (with-open-file (content-file content-file-path)
+                                      (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
+                                        (if extracted-metadata
+                                            (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
+                                                   (article-date (split-date (getf metadata-object :date-created))))
+                                              ;;Two extra "attributes" we wish to add to the existing metadata we parsed
+                                              (setf (getf metadata-object :article-path) content-file-path)
+                                              (setf (getf metadata-object :date-created) (encode-timestamp 0 
+                                                                                                           0 
+                                                                                                           0 
+
+                                                                                                           0 
+                                                                                                           (parse-integer (second article-date)) 
+                                                                                                           (parse-integer (first article-date)) 
+                                                                                                           (parse-integer (third article-date))))
+                                              metadata-object)
+                                            'nil))))
+                                  (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
+                             (lambda (article-metadata-one article-metadata-two)
+                               (timestamp>= (getf article-metadata-one :date-created) (getf article-metadata-two :date-created))))))
+        (make-array (list (length temp-list)) :initial-contents temp-list))))
+
+(defun create-slug (metadata) (regex-replace-all "\\W"
+                                              (regex-replace-all "\\s"
+                                                                 (car (multiple-value-list (regex-replace-all
+                                                                                            "\\s+"
+                                                                                            (string-downcase (getf metadata :title))
+                                                                                            " ")))
+                                                                 "_")
+                                              ""))
+
+;; render-content array path-specifier path-specifier => nil
+;; Returns the array of articles listed so methods could be chained. The point of interest is it's side effect 
+;; which fills the rendered/articles directory within the blog directory with the rendered articles (and creates
+;; the sub directories if they do not already exist
+(defun render-articles (article-listing article-template blog-directory)
+  (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/")))
+    (ensure-directories-exist rendered-article-path)
+    (loop for i from 0 upto (- (length article-listing) 1) do
+         (let* ((article (aref article-listing i))
+                (current-slug (create-slug article)))
+           (with-open-file (outfile (merge-pathnames-as-file  rendered-article-path (concatenate 'string current-slug ".html"))
+                                    :direction :output 
+                                    :if-exists :rename-and-delete
+                                    :if-does-not-exist :create)
+             (let ((next-article-info
+                    (if (> i 0)
+                        (let* ((next-entry (aref article-listing (- i 1)))
+                               (next-slug (create-slug next-entry)))
+                          (list :next-entry-title (getf next-entry :title)
+                                :next-entry (concatenate 'string
+                                                             "/articles/"
+                                                             next-slug
+                                                             ".html")))))
+                   (previous-article-info
+                    (if (< (+ i 1) (length article-listing))
+                        (let* ((previous-entry (aref article-listing (+ i 1)))
+                              (previous-slug (create-slug previous-entry)))
+                          (list :previous-entry-title (getf previous-entry :title)
+                                :previous-entry (concatenate 'string
+                                                         "/articles/"
+                                                         previous-slug
+                                                         ".html")))))
+                   (date-created (split-date-components (getf article :date-created))))
+               (apply #'render-page (append (list article-template
+                                                  outfile)
+                                            `(:content-path ,(getf article :article-path))
+                                            `(:extra-environment-variables ,(append previous-article-info
+                                                                                    next-article-info
+                                                                                    `(:date-created ,date-created)
+                                                                                    `(:article-title ,(getf article :title))))))))))))
+
+;; create-archive-metadata array => nil
+(defun create-archive-metadata (article-listing)
+  (loop for i from 0 upto (- (length article-listing) 1) collect
+       (let* ((article (aref article-listing i))
+              (current-slug (create-slug article))
+              (article-title (getf article :title))
+              (creation-date-components (split-date-components (getf article :date-created))))
+         (append (list :title article-title
+                       :page-link (concatenate 'string
+                                          "/articles/"
+                                          current-slug
+                                          ".html")
+                       :date creation-date-components)))))
+
+;; TODO Create different strategies for listings (separate by year and month)?
+(defun render-simple-archive (article-listing archive-template blog-directory)
+  (with-open-file (outfile (merge-pathnames-as-file blog-directory "rendered/archive.html")
+                           :direction :output 
+                           :if-exists :rename-and-delete
+                           :if-does-not-exist :create)
+    (render-page archive-template
+                 outfile
+                 :extra-environment-variables `(:articles ,(create-archive-metadata article-listing)))))
+
+(defun create-page-listing (blog-directory)
+  (map 'list
+       #'(lambda (page-file-path)
+           (with-open-file (page-file page-file-path)
+             (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line page-file))))))
+               (if extracted-metadata
+                   (let* ((metadata-object (read (make-string-input-stream extracted-metadata))))
+                     (setf (getf metadata-object :page-path) page-file-path)
+                     metadata-object)
+                   'nil))))
+       (list-directory (merge-pathnames-as-directory blog-directory #p"pages/"))))
+
+(defun render-pages (page-listing page-template blog-directory)
+  (let ((rendered-pages-path (merge-pathnames-as-directory blog-directory #p"rendered/pages/")))
+    (ensure-directories-exist rendered-pages-path)
+    (loop for page in page-listing do
+         (let ((page-slug (create-slug page)))
+           (with-open-file (outfile (merge-pathnames-as-file rendered-pages-path (concatenate 'string page-slug ".html"))
+                                    :direction :output
+                                    :if-exists :rename-and-delete
+                                    :if-does-not-exist :create)
+             (render-page page-template
+                          outfile
+                          :content-path (getf page :page-path)
+                          :extra-environment-variables `(:page-title ,(getf page :title))))))))
+
+(defun render-all (blog-directory article-template archive-template page-template)
+  (flet ((get-first-article-path (the-articles)
+           (merge-pathnames-as-file *blog-directory*
+                                    "rendered/articles/"
+                                    (concatenate 'string (create-slug (aref the-articles 0)) ".html"))))
+         (let* ((articles (create-article-listing blog-directory))
+                (pages (create-page-listing blog-directory)))
+           (when (> (length articles) 0)
+             (progn (render-articles articles article-template blog-directory)
+                    (render-simple-archive articles archive-template blog-directory)
+                    (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)))
+           (when (> (length pages) 0)
+             (render-pages pages page-template blog-directory))
+           (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))
+
+(defun render-blog ()
+  (render-all *blog-directory*
+              *article-template*
+              *archive-template*
+              *page-template*))

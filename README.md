@@ -29,6 +29,15 @@ When you it's time to render simple run the `render-blog` function with no argum
 
 This will render all the blog posts, pages, an archive and copy all the files in the static folder into another folder called `rendered`.
 
+I use [Hunchentoot](https://github.com/edicl/hunchentoot) to provide a simple dev server to allow you to preview your work prior to uploading. Just point your browser to localhost:8080 after starting the dev server
+
+```
+;; Starting the dev server
+(start-dev-server)
+;; Stopping the ev server
+(stop-dev-server)
+```
+
 ## Scaffolding
 
 When you run the `create-blog` function it will bring up some scaffolding for your blog.

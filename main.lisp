@@ -16,6 +16,11 @@
 (defvar *article-template* 'nil)
 (defvar *archive-template* 'nil)
 (defvar *page-template* 'nil)
+(defvar *rss-feed-template* 'nil)
+(defvar *blog-title* 'nil)
+(defvar *blog-description* 'nil)
+(defvar *blog-url* 'nil)
+
 (defvar *server* (make-instance 'acceptor :port 8080))
 
 (defun copy-directory (from-directory to-directory)
@@ -33,23 +38,22 @@
                                 (copy-file original-file (merge-pathnames-as-file to-directory partial-path) :overwrite t)))))
                   :directories :breadth-first))
 
-(defun set-template-files (&key article archive page)
-  (when (and article archive page)
-    (progn
-      (setf *article-template* article)
-      (setf *archive-template* archive)
-      (setf *page-template* page))))
-
 (defun set-blog-paths (blog-directory)
   (setf *blog-directory* blog-directory)
   (add-template-directory (merge-pathnames-as-directory blog-directory "templates/"))
   (setf (acceptor-document-root *server*) (merge-pathnames-as-directory blog-directory "rendered/")))
 
 ;;for configuration purposes
-(defmacro :templates (&key article archive page)
-  `(set-template-files :article ,article
-                       :archive ,archive
-                       :page ,page))
+(defun :blog-configuration (&key article archive page rss-template title description url)
+  (when (and article archive page rss-template title description url)
+    (progn
+      (setf *article-template* article)
+      (setf *archive-template* archive)
+      (setf *page-template* page)
+      (setf *blog-title* title)
+      (setf *blog-description* description)
+      (setf *blog-url* url)
+      (setf *rss-feed-template* rss-template))))
 
 (defun open-blog (blog-directory)
   (if (file-exists-p (merge-pathnames-as-file blog-directory "config.lisp"))
@@ -58,7 +62,7 @@
         (load (merge-pathnames-as-file blog-directory "config.lisp")))
       (format t "No configuration file found")))
 
-(defun create-blog (blog-directory-root)
+(defun create-blog (blog-directory-root blog-title blog-description blog-url)
   (ensure-directories-exist blog-directory-root)
   (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "templates/"))
   (ensure-directories-exist (merge-pathnames-as-directory blog-directory-root "content/"))
@@ -68,7 +72,14 @@
                                    :direction :output
                                    :if-exists 'nil
                                    :if-does-not-exist :create)
-    (print '(:templates :article "article.html" :archive "archive.html" :page "page.html") new-config-file))
+    (print `(:blog-configuration :title ,blog-title
+                                 :description ,blog-description
+                                 :url ,blog-url
+                                 :article "article.html"
+                                 :archive "archive.html"
+                                 :page "page.html"
+                                 :rss-template "feed-template.xml")
+           new-config-file))
   (open-blog blog-directory-root))
 
 (defun start-dev-server ()
@@ -147,6 +158,8 @@
 (defun render-articles (article-listing article-template blog-directory)
   (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/")))
     (ensure-directories-exist rendered-article-path)
+    ;; We traverse by index rather than as across because we want access to articles before and after the
+    ;; one we are currently looking at
     (loop for i from 0 upto (- (length article-listing) 1) do
          (let* ((article (aref article-listing i))
                 (current-slug (create-slug article)))
@@ -217,6 +230,38 @@
                    'nil))))
        (list-directory (merge-pathnames-as-directory blog-directory #p"pages/"))))
 
+(defun render-rss-feed (blog-directory rss-template blog-title blog-url blog-description article-listing)
+  (flet ((format-to-rfc-822 (article-date)
+           (let ((day-enum #("Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat"))
+                 (month-enum #("Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec")))
+             (format 'nil
+                     "~a, ~a ~a ~a 00:00:00 GMT"
+                     (aref day-enum (timestamp-day-of-week article-date))
+                     (timestamp-day article-date)
+                     (aref month-enum (- (timestamp-month article-date) 1))
+                     (timestamp-year article-date)))))
+      (with-open-file (rss-feed (merge-pathnames-as-file blog-directory "rendered/rss.xml")
+                                :direction :output
+                                :if-exists :rename-and-delete
+                                :if-does-not-exist :create)
+        (render-page rss-template
+                     rss-feed
+                     :extra-environment-variables (append `(:blog-title ,blog-title
+                                                            :blog-url ,blog-url
+                                                            :blog-description ,blog-description
+                                                            :last-build-date ,(format-to-rfc-822 (now))
+                                                            :items)
+                                                          `(,(loop for article across article-listing
+                                                                collect (list :title (getf article :title)
+                                                                              :description (cadr (multiple-value-list (markdown (getf article :article-path) :stream 'nil)))
+                                                                              :link (concatenate 'string
+                                                                                                 *blog-url*
+                                                                                                 "/articles/"
+                                                                                                 (create-slug article)
+                                                                                                 ".html")
+                                                                              :publish-date (format-to-rfc-822 (getf article :date-created))))))))))
+         
+
 (defun render-pages (page-listing page-template blog-directory)
   (let ((rendered-pages-path (merge-pathnames-as-directory blog-directory #p"rendered/pages/")))
     (ensure-directories-exist rendered-pages-path)
@@ -231,7 +276,7 @@
                           :content-path (getf page :page-path)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))
 
-(defun render-all (blog-directory article-template archive-template page-template)
+(defun render-all (blog-directory article-template archive-template page-template rss-template blog-title blog-description blog-url)
   (flet ((get-first-article-path (the-articles)
            (merge-pathnames-as-file *blog-directory*
                                     "rendered/articles/"
@@ -241,7 +286,8 @@
            (when (> (length articles) 0)
              (progn (render-articles articles article-template blog-directory)
                     (render-simple-archive articles archive-template blog-directory)
-                    (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)))
+                    (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)
+                    (render-rss-feed blog-directory rss-template blog-title blog-url blog-description articles)))
            (when (> (length pages) 0)
              (render-pages pages page-template blog-directory))
            (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))
@@ -250,4 +296,8 @@
   (render-all *blog-directory*
               *article-template*
               *archive-template*
-              *page-template*))
+              *page-template*
+              *rss-feed-template*
+              *blog-title*
+              *blog-description*
+              *blog-url*))

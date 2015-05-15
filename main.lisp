@@ -252,14 +252,17 @@
                                                             :last-build-date ,(format-to-rfc-822 (now))
                                                             :items)
                                                           `(,(loop for article across article-listing
-                                                                collect (list :title (getf article :title)
-                                                                              :description (cadr (multiple-value-list (markdown (getf article :article-path) :stream 'nil)))
-                                                                              :link (concatenate 'string
-                                                                                                 *blog-url*
-                                                                                                 "/articles/"
-                                                                                                 (create-slug article)
-                                                                                                 ".html")
-                                                                              :publish-date (format-to-rfc-822 (getf article :date-created))))))))))
+                                                                collect (append `(:title ,(getf article :title)
+                                                                                         :description ,(cadr (multiple-value-list (markdown (getf article :article-path) :stream 'nil)))
+                                                                                         :link ,(concatenate 'string
+                                                                                                            *blog-url*
+                                                                                                            "/articles/"
+                                                                                                            (create-slug article)
+                                                                                                            ".html")
+                                                                                         :publish-date ,(format-to-rfc-822 (getf article :date-created)))
+                                                                                (if (getf article :category)
+                                                                                    `(:category ,(getf article :category))
+                                                                                    nil)))))))))
          
 
 (defun render-pages (page-listing page-template blog-directory)

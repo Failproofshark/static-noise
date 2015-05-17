@@ -214,18 +214,14 @@
                                                                                     `(:date-created ,date-created)
                                                                                     `(:article-title ,(getf article :title))))))))))))
 
-;; create-archive-metadata array => nil
 (defun create-archive-metadata (article-listing)
-  (loop for i from 0 upto (- (length article-listing) 1) collect
-       (let* ((article (aref article-listing i))
-              (current-slug (create-slug article))
+  "Extracts data relavant for an archive page from a more complete metadata set"
+  (loop for article across article-listing collect
+       (let* ((current-slug (create-slug article))
               (article-title (getf article :title))
               (creation-date-components (split-date-components (getf article :date-created))))
          (append (list :title article-title
-                       :page-link (concatenate 'string
-                                          "/articles/"
-                                          current-slug
-                                          ".html")
+                       :page-link (create-article-link current-slug)
                        :date creation-date-components)))))
 
 ;; TODO Create different strategies for listings (separate by year and month)?

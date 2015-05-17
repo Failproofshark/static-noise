@@ -270,11 +270,7 @@
                                                           `(,(loop for article across article-listing
                                                                 collect (append `(:title ,(getf article :title)
                                                                                          :description ,(cadr (multiple-value-list (markdown (getf article :file-path) :stream 'nil)))
-                                                                                         :link ,(concatenate 'string
-                                                                                                            *blog-url*
-                                                                                                            "/articles/"
-                                                                                                            (create-slug article)
-                                                                                                            ".html")
+                                                                                         :link ,(create-article-link (create-slug article) blog-url)
                                                                                          :publish-date ,(format-to-rfc-822 (getf article :date-created)))
                                                                                 (if (getf article :category)
                                                                                     `(:category ,(getf article :category))

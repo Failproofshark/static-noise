@@ -8,8 +8,10 @@
         :cl-fad
         :cl-markdown
         :hunchentoot
+        :alexandria
         :local-time)
-  (:shadowing-import-from :djula :url-encode))
+  (:shadowing-import-from :djula :url-encode)
+  (:shadowing-import-from :cl-fad :copy-file :copy-stream))
 (in-package :static-noise)
 
 (defvar *blog-directory* 'nil)
@@ -20,6 +22,8 @@
 (defvar *blog-title* 'nil)
 (defvar *blog-description* 'nil)
 (defvar *blog-url* 'nil)
+(defvar *content-cache* 'nil)
+(defvar *page-cache* 'nil)
 
 (defvar *server* (make-instance 'acceptor :port 8080))
 
@@ -57,9 +61,16 @@
 
 (defun open-blog (blog-directory)
   (if (file-exists-p (merge-pathnames-as-file blog-directory "config.lisp"))
-      (progn
+      (let ((article-cache-file-path (merge-pathnames-as-file blog-directory "article-cache"))
+            (page-cache-file-path (merge-pathnames-as-file blog-directory "page-cache")))
         (set-blog-paths blog-directory)
-        (load (merge-pathnames-as-file blog-directory "config.lisp")))
+        (load (merge-pathnames-as-file blog-directory "config.lisp"))
+        (when (file-exists-p article-cache-file-path)
+          (with-open-file (article-cache-file article-cache-file-path)
+            (setf *content-cache* (read article-cache-file))))
+        (when (file-exists-p page-cache-file-path)
+          (with-open-file (page-cache-file page-cache-file-path)
+            (setf *page-cache* (read page-cache-file)))))
       (format t "No configuration file found")))
 
 (defun create-blog (blog-directory-root blog-title blog-description blog-url)
@@ -113,43 +124,53 @@
                        `(:content ,(get-output-stream-string input-content-string)))
                    extra-environment-variables))))
 
-;; create-article-listing => array
-;; Returns a list of plists containing a list of articles, their path name and their associated meta data
-;; sorted by the date they were created
 (defun create-article-listing (blog-directory)
-    (flet ((split-date (date-string) (split "-" (regex-replace-all "\\s" date-string ""))))
-      (let ((temp-list (sort (map 'list
-                                  (lambda (content-file-path)
-                                    (with-open-file (content-file content-file-path)
-                                      (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
-                                        (if extracted-metadata
-                                            (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
-                                                   (article-date (split-date (getf metadata-object :date-created))))
-                                              ;;Two extra "attributes" we wish to add to the existing metadata we parsed
-                                              (setf (getf metadata-object :article-path) content-file-path)
-                                              (setf (getf metadata-object :date-created) (encode-timestamp 0 
-                                                                                                           0 
-                                                                                                           0 
+  "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
+  (flet ((split-date (date-string) (split "-" (regex-replace-all "\\s" date-string ""))))
+    (let ((temp-list (sort (map 'list
+                                (lambda (content-file-path)
+                                  (with-open-file (content-file content-file-path)
+                                    (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
+                                      (if extracted-metadata
+                                          (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
+                                                 (article-date (split-date (getf metadata-object :date-created))))
+                                            ;;Two extra "attributes" we wish to add to the existing metadata we parsed
+                                            (setf (getf metadata-object :file-path) content-file-path)
+                                            (setf (getf metadata-object :date-created) (encode-timestamp 0 
+                                                                                                         0 
+                                                                                                         0 
 
-                                                                                                           0 
-                                                                                                           (parse-integer (second article-date)) 
-                                                                                                           (parse-integer (first article-date)) 
-                                                                                                           (parse-integer (third article-date))))
-                                              metadata-object)
-                                            'nil))))
-                                  (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
-                             (lambda (article-metadata-one article-metadata-two)
-                               (timestamp>= (getf article-metadata-one :date-created) (getf article-metadata-two :date-created))))))
-        (make-array (list (length temp-list)) :initial-contents temp-list))))
+                                                                                                         0 
+                                                                                                         (parse-integer (second article-date)) 
+                                                                                                         (parse-integer (first article-date)) 
+                                                                                                         (parse-integer (third article-date))))
+                                            metadata-object)
+                                          'nil))))
+                                (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
+                           (lambda (article-metadata-one article-metadata-two)
+                             (timestamp>= (getf article-metadata-one :date-created) (getf article-metadata-two :date-created))))))
+      (make-array (list (length temp-list)) :initial-contents temp-list))))
 
-(defun create-slug (metadata) (regex-replace-all "\\W"
-                                              (regex-replace-all "\\s"
-                                                                 (car (multiple-value-list (regex-replace-all
-                                                                                            "\\s+"
-                                                                                            (string-downcase (getf metadata :title))
-                                                                                            " ")))
-                                                                 "_")
-                                              ""))
+(defun create-cache (listing)
+  "Creates a plist with the structure (:filename (:content \"some_content\" :last-modified 123456)). This is usually run once with a newly created blog as it is called during the normal rendering process. The only other times it runs is either manually by the user or if the cache was somehow previously deleted"
+  (loop for item across listing
+     append (let ((file-path (getf item :file-path)))
+              `(,(make-keyword (file-namestring file-path))
+                 (:content
+                  ,(cadr (multiple-value-list (markdown file-path :stream nil)))
+                  :last-modified ,(file-write-date file-path))))))
+         
+
+(defun create-slug (metadata)
+  "Creates a slug useful for creating page links"
+  (regex-replace-all "\\W"
+                     (regex-replace-all "\\s"
+                                        (car (multiple-value-list (regex-replace-all
+                                                                   "\\s+"
+                                                                   (string-downcase (getf metadata :title))
+                                                                   " ")))
+                                        "_")
+                     ""))
 
 ;; render-content array path-specifier path-specifier => nil
 ;; Returns the array of articles listed so methods could be chained. The point of interest is it's side effect 
@@ -188,7 +209,7 @@
                    (date-created (split-date-components (getf article :date-created))))
                (apply #'render-page (append (list article-template
                                                   outfile)
-                                            `(:content-path ,(getf article :article-path))
+                                            `(:content-path ,(getf article :file-path))
                                             `(:extra-environment-variables ,(append previous-article-info
                                                                                     next-article-info
                                                                                     `(:date-created ,date-created)
@@ -225,7 +246,7 @@
              (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line page-file))))))
                (if extracted-metadata
                    (let* ((metadata-object (read (make-string-input-stream extracted-metadata))))
-                     (setf (getf metadata-object :page-path) page-file-path)
+                     (setf (getf metadata-object :file-path) page-file-path)
                      metadata-object)
                    'nil))))
        (list-directory (merge-pathnames-as-directory blog-directory #p"pages/"))))
@@ -253,7 +274,7 @@
                                                             :items)
                                                           `(,(loop for article across article-listing
                                                                 collect (append `(:title ,(getf article :title)
-                                                                                         :description ,(cadr (multiple-value-list (markdown (getf article :article-path) :stream 'nil)))
+                                                                                         :description ,(cadr (multiple-value-list (markdown (getf article :file-path) :stream 'nil)))
                                                                                          :link ,(concatenate 'string
                                                                                                             *blog-url*
                                                                                                             "/articles/"
@@ -276,7 +297,7 @@
                                     :if-does-not-exist :create)
              (render-page page-template
                           outfile
-                          :content-path (getf page :page-path)
+                          :content-path (getf page :file-path)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))
 
 (defun render-all (blog-directory article-template archive-template page-template rss-template blog-title blog-description blog-url)

@@ -10,5 +10,6 @@
                :cl-fad
                :cl-markdown
                :hunchentoot
+               :alexandria
                :local-time)
   :components ((:file "main")))

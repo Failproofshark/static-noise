@@ -159,10 +159,9 @@
                  (:content
                   ,(cadr (multiple-value-list (markdown file-path :stream nil)))
                   :last-modified ,(file-write-date file-path))))))
-         
 
 (defun create-slug (metadata)
-  "Creates a slug useful for creating page links"
+  "Creates a slug useful for creating page links and file names"
   (regex-replace-all "\\W"
                      (regex-replace-all "\\s"
                                         (car (multiple-value-list (regex-replace-all
@@ -172,11 +171,17 @@
                                         "_")
                      ""))
 
-;; render-content array path-specifier path-specifier => nil
-;; Returns the array of articles listed so methods could be chained. The point of interest is it's side effect 
-;; which fills the rendered/articles directory within the blog directory with the rendered articles (and creates
-;; the sub directories if they do not already exist
+(defun create-article-link (slug &optional blog-url)
+  "Creates a link to a specific article"
+  (concatenate 'string
+               (when blog-url
+                 blog-url)
+               "/articles/"
+               slug
+               ".html"))
+
 (defun render-articles (article-listing article-template blog-directory)
+  "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/")))
     (ensure-directories-exist rendered-article-path)
     ;; We traverse by index rather than as across because we want access to articles before and after the
@@ -193,19 +198,13 @@
                         (let* ((next-entry (aref article-listing (- i 1)))
                                (next-slug (create-slug next-entry)))
                           (list :next-entry-title (getf next-entry :title)
-                                :next-entry (concatenate 'string
-                                                             "/articles/"
-                                                             next-slug
-                                                             ".html")))))
+                                :next-entry (create-article-link next-slug)))))
                    (previous-article-info
                     (if (< (+ i 1) (length article-listing))
                         (let* ((previous-entry (aref article-listing (+ i 1)))
                               (previous-slug (create-slug previous-entry)))
                           (list :previous-entry-title (getf previous-entry :title)
-                                :previous-entry (concatenate 'string
-                                                         "/articles/"
-                                                         previous-slug
-                                                         ".html")))))
+                                :previous-entry (create-article-link previous-slug)))))
                    (date-created (split-date-components (getf article :date-created))))
                (apply #'render-page (append (list article-template
                                                   outfile)

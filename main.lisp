@@ -329,7 +329,7 @@
                           :content-path (getf page :file-path)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))
 
-(defun render-all (blog-directory article-template archive-template page-template rss-template blog-title blog-description blog-url)
+(defun render-all (blog-directory article-template article-cache archive-template page-template rss-template blog-title blog-description blog-url)
   (flet ((get-first-article-path (the-articles)
            (merge-pathnames-as-file *blog-directory*
                                     "rendered/articles/"
@@ -337,7 +337,7 @@
          (let* ((articles (create-article-listing blog-directory))
                 (pages (create-page-listing blog-directory)))
            (when (> (length articles) 0)
-             (progn (render-articles articles article-template blog-directory)
+             (progn (render-cached-content #'render-articles "article-cache.lisp" article-cache articles article-template blog-directory)
                     (render-simple-archive articles archive-template blog-directory)
                     (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)
                     (render-rss-feed blog-directory rss-template blog-title blog-url blog-description articles)))
@@ -348,6 +348,7 @@
 (defun render-blog ()
   (render-all *blog-directory*
               *article-template*
+              *article-cache*
               *archive-template*
               *page-template*
               *rss-feed-template*

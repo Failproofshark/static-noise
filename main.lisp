@@ -65,12 +65,14 @@
             (page-cache-file-path (merge-pathnames-as-file blog-directory "page-cache.lisp")))
         (set-blog-paths blog-directory)
         (load (merge-pathnames-as-file blog-directory "config.lisp"))
-        (when (file-exists-p article-cache-file-path)
-          (with-open-file (article-cache-file article-cache-file-path)
-            (setf *article-cache* (read article-cache-file))))
-        (when (file-exists-p page-cache-file-path)
+        (if (file-exists-p article-cache-file-path)
+            (with-open-file (article-cache-file article-cache-file-path)
+              (setf *article-cache* (read article-cache-file)))
+            nil)
+        (if (file-exists-p page-cache-file-path)
           (with-open-file (page-cache-file page-cache-file-path)
-            (setf *page-cache* (read page-cache-file)))))
+            (setf *page-cache* (read page-cache-file)))
+          nil))
       (format t "No configuration file found")))
 
 (defun create-blog (blog-directory-root blog-title blog-description blog-url)
@@ -172,6 +174,17 @@
                   cache))
         (values (getf cache-entry :content)
                 nil))))
+
+(defun render-cached-content (render-function cache-file-name cache listing template blog-directory)
+  "Render content that may be cached, return a cache which may have been updated, and save the new cache if it proven to be invalid as a side effect. The render-function is a function and the cache-file-name argument should be a string representing the file name that the cache will be written to."
+  (multiple-value-bind (cache should-write) (funcall render-function cache listing template blog-directory)
+    (when should-write
+      (with-open-file (cache-file (merge-pathnames-as-file blog-directory cache-file-name)
+                                  :direction :output
+                                  :if-exists :rename-and-delete
+                                  :if-does-not-exist :create)
+        (print cache cache-file))
+      cache)))
 
 (defun create-slug (metadata)
   "Creates a slug useful for creating page links and file names"

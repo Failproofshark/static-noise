@@ -22,7 +22,7 @@
 (defvar *blog-title* 'nil)
 (defvar *blog-description* 'nil)
 (defvar *blog-url* 'nil)
-(defvar *content-cache* 'nil)
+(defvar *article-cache* 'nil)
 (defvar *page-cache* 'nil)
 
 (defvar *server* (make-instance 'acceptor :port 8080))
@@ -61,13 +61,13 @@
 
 (defun open-blog (blog-directory)
   (if (file-exists-p (merge-pathnames-as-file blog-directory "config.lisp"))
-      (let ((article-cache-file-path (merge-pathnames-as-file blog-directory "article-cache"))
-            (page-cache-file-path (merge-pathnames-as-file blog-directory "page-cache")))
+      (let ((article-cache-file-path (merge-pathnames-as-file blog-directory "article-cache.lisp"))
+            (page-cache-file-path (merge-pathnames-as-file blog-directory "page-cache.lisp")))
         (set-blog-paths blog-directory)
         (load (merge-pathnames-as-file blog-directory "config.lisp"))
         (when (file-exists-p article-cache-file-path)
           (with-open-file (article-cache-file article-cache-file-path)
-            (setf *content-cache* (read article-cache-file))))
+            (setf *article-cache* (read article-cache-file))))
         (when (file-exists-p page-cache-file-path)
           (with-open-file (page-cache-file page-cache-file-path)
             (setf *page-cache* (read page-cache-file)))))
@@ -103,25 +103,23 @@
 (defsimple-extension metadata
   "")
 
-;; split-date-components timestamp => list
-;; Returns a list of date components from a given timestamp day month year
 (defun split-date-components (timestamp)
+  "Returns a list of date components from a given timestamp day month year"
   (list :day (timestamp-day timestamp)
         :month (timestamp-month timestamp)
         :year (timestamp-year timestamp)))
 
-;; render-page path-specifier path-specifier stream &optional extra-environment-variables => string
-;; Given a path specifier to the template and related markdown content
-;; produce a plist with the metacontent and the rendered page output as a plain string
-(defun render-page (template-file-name stream &key content-path extra-environment-variables)
+(defun render-page (template-file-name stream &key content content-path extra-environment-variables)
+  "Given the template to render with a stream to write to, the actual content (content key argument) OR a path specifier (content-path key argument) render the page to HTML. Extra environment variables for the templates use may be made available by sending a list through the extra-environment-variables key argument"
   (let ((input-content-string (make-string-output-stream)))
     (if content-path
         (markdown content-path :stream input-content-string))
     (apply #'render-template* 
            (append (list (compile-template* template-file-name)
                          stream)
-                   (if content-path
-                       `(:content ,(get-output-stream-string input-content-string)))
+                   `(:content ,(if content-path
+                                   (get-output-stream-string input-content-string)
+                                   content))
                    extra-environment-variables))))
 
 (defun create-article-listing (blog-directory)
@@ -160,6 +158,21 @@
                   ,(cadr (multiple-value-list (markdown file-path :stream nil)))
                   :last-modified ,(file-write-date file-path))))))
 
+(defun retrieve-cached-content (file-path cache)
+  "Returns a string representing the content of the given file path and a boolean representing whether or not the cache needs to be resaved and, if need be, a new cache. The string value returned is the result of one of three outcomes, first the content is new that does not exist in the cache (which is added to the current cache as a side effect), the content file has been modified since the cached time in which the newly rendered content replaces the old content and the new content is returned, and finally the content exists and is up to date to which the cached content is returned. A possible side effect of this function is that the content and last modified time for the cached content specified by the file-path may be changed if invalidated"
+  (let* ((current-modified-time (file-write-date file-path))
+         (cache-keyword (make-keyword (file-namestring file-path)))
+         (cache-entry (getf cache cache-keyword)))
+    (if (or (not cache-entry)
+            (> current-modified-time (getf cache-entry :last-modified)))
+        (let ((new-data `(:content ,(cadr (multiple-value-list (markdown file-path :stream nil))) :last-modified ,current-modified-time)))
+          (setf (getf cache cache-keyword) new-data)
+          (values (getf new-data :content)
+                  t
+                  cache))
+        (values (getf cache-entry :content)
+                nil))))
+
 (defun create-slug (metadata)
   "Creates a slug useful for creating page links and file names"
   (regex-replace-all "\\W"
@@ -180,9 +193,15 @@
                slug
                ".html"))
 
-(defun render-articles (article-listing article-template blog-directory)
+(defun render-articles (article-cache article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
-  (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/")))
+  (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
+        (cache (if article-cache
+                   article-cache
+                   (create-cache article-listing)))
+        (save-cache (if article-cache
+                        nil
+                        t)))
     (ensure-directories-exist rendered-article-path)
     ;; We traverse by index rather than as across because we want access to articles before and after the
     ;; one we are currently looking at
@@ -206,13 +225,19 @@
                           (list :previous-entry-title (getf previous-entry :title)
                                 :previous-entry (create-article-link previous-slug)))))
                    (date-created (split-date-components (getf article :date-created))))
-               (apply #'render-page (append (list article-template
-                                                  outfile)
-                                            `(:content-path ,(getf article :file-path))
+               (apply #'render-page (append `(,article-template
+                                              ,outfile
+                                              :content ,(multiple-value-bind (content is-invalid-cache new-cache) (retrieve-cached-content (getf article :file-path) cache)
+                                                                             (when is-invalid-cache
+                                                                               (setf cache new-cache))
+                                                                             (setf save-cache (or save-cache
+                                                                                                  is-invalid-cache))
+                                                                             content))
                                             `(:extra-environment-variables ,(append previous-article-info
                                                                                     next-article-info
                                                                                     `(:date-created ,date-created)
-                                                                                    `(:article-title ,(getf article :title))))))))))))
+                                                                                    `(:article-title ,(getf article :title))))))))))
+    (values cache save-cache)))
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"

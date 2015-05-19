@@ -9,10 +9,10 @@ Static Noise is a simple blog-centric static site generator written in Common Li
 
 ## Usage
 
-After loading the system set it as your main package. Once you have done that you could either create a new blog with the `create-blog` function and giving it an absolute pathname where you wish to keep your blog
+After loading the system set it as your main package. Once you have done that you could either create a new blog with the `create-blog` function and giving it a path specifier for the root directory of your blog, the title, a description of your blog (used for the generated RSS feed), and a url to your blog
 
 ```
-(create-blog #p"/home/foo/myblog/")
+(create-blog #p"/home/foo/myblog/" "blog title" "describe your blog" "www.myblog.com")
 ```
 
 The directory will be created as well as a basic scaffolding for you to work with. If you already have a blog you wish to work with you may use the `open-blog` function giving it the absolute pathname where you keep your blog
@@ -47,7 +47,13 @@ When you run the `create-blog` function it will bring up some scaffolding for yo
 Configuration is pretty sparce at the moment, and is a simple plist that sets the templates to be used for rendering the different types of pages for your blog. Configuration must go into the file called `config.lisp` in the root directory. You only need to enter the name of the template since all templates are read from the `templates` directory. A default configuration is started for you upon creation.
 
 ```
-(:TEMPLATES :ARTICLE "article.html" :ARCHIVE "archive.html" :PAGE "page.html")
+(:blog-configuration :TITLE "Your blog name"
+                     :description "A description"
+                     :url "www.something.com"
+                     :ARTICLE "article.html"
+                     :ARCHIVE "archive.html"
+                     :PAGE "page.html"
+                     :RSS-TEMPLATE "feed-template.xml")
 ```
 
 ### Templates

@@ -225,14 +225,17 @@
                         (list :previous-entry-title (getf previous-article :title)
                               :previous-entry (create-article-link (create-slug previous-article)))))
                    (date-created (split-date-components (getf current-article :date-created))))
-               (apply #'render-page (append `(,article-template
-                                              ,outfile
-                                              :content-path ,(getf current-article :file-path))
-                                            `(:extra-environment-variables ,(append previous-article-info
-                                                                                    next-article-info
-                                                                                    `(:date-created ,date-created)
-                                                                                    `(:article-title ,(getf current-article :title))))))))
-           (setf next-article current-article)))))
+               (setf (getf current-article :content) (apply #'render-page (append `(,article-template
+                                                                                    ,outfile
+                                                                                    :content-path ,(getf current-article :file-path))
+                                                                                  `(:extra-environment-variables ,(append previous-article-info
+                                                                                                                          next-article-info
+                                                                                                                          `(:date-created ,date-created)
+                                                                                                                          `(:article-title ,(getf current-article :title)))))))
+               (setf (getf current-article :last-modified)
+                     (file-write-date (getf current-article :file-path)))))
+           (setf next-article current-article)))
+    article-listing))
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"

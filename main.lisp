@@ -174,6 +174,7 @@
         (values (getf cache-entry :content)
                 nil))))
 
+;;This will be deprecated
 (defun render-cached-content (render-function cache-file-name cache listing template blog-directory)
   "Render content that may be cached, return a cache which may have been updated, and save the new cache if it proven to be invalid as a side effect. The render-function is a function and the cache-file-name argument should be a string representing the file name that the cache will be written to."
   (multiple-value-bind (cache should-write) (funcall render-function cache listing template blog-directory)
@@ -205,12 +206,22 @@
                slug
                ".html"))
 
+(defun render-or-retrieve-cache (metadata)
+  (let* ((file-path (getf metadata :file-path))
+         (last-modified-date (getf metadata :last-modified))
+         (content (or (and last-modified-date
+                           (<= last-modified-date (file-write-date file-path))
+                           (getf metadata :cached-content))
+                      (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil)
+                        rendered-content))))
+    content))
+
 (defun render-articles (article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
         (next-article nil))
     (ensure-directories-exist rendered-article-path)
-    (loop for current-article in article-listing and previous-article in (cdr article-listing) do
+    (loop for current-article in article-listing and previous-article in (cdr article-listing) collect
          (let ((current-slug (create-slug current-article)))
            (with-open-file (outfile (merge-pathnames-as-file rendered-article-path (concatenate 'string current-slug ".html"))
                                     :direction :output 
@@ -224,18 +235,21 @@
                     (if previous-article
                         (list :previous-entry-title (getf previous-article :title)
                               :previous-entry (create-article-link (create-slug previous-article)))))
-                   (date-created (split-date-components (getf current-article :date-created))))
-               (setf (getf current-article :content) (apply #'render-page (append `(,article-template
-                                                                                    ,outfile
-                                                                                    :content-path ,(getf current-article :file-path))
-                                                                                  `(:extra-environment-variables ,(append previous-article-info
-                                                                                                                          next-article-info
-                                                                                                                          `(:date-created ,date-created)
-                                                                                                                          `(:article-title ,(getf current-article :title)))))))
+                   (date-created (split-date-components (getf current-article :date-created)))
+                   (content (render-or-retrieve-cache current-article)))
+               (setf (getf current-article :content)
+                     content)
+               (apply #'render-page (append `(,article-template
+                                              ,outfile
+                                              :content ,content)
+                                            `(:extra-environment-variables ,(append previous-article-info
+                                                                                    next-article-info
+                                                                                    `(:date-created ,date-created)
+                                                                                    `(:article-title ,(getf current-article :title))))))
                (setf (getf current-article :last-modified)
                      (file-write-date (getf current-article :file-path)))))
-           (setf next-article current-article)))
-    article-listing))
+           (setf next-article current-article)
+           current-article))))
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"

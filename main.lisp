@@ -248,8 +248,12 @@
                                                                                     `(:article-title ,(getf current-article :title))))))
                (setf (getf current-article :last-modified)
                      (file-write-date (getf current-article :file-path)))))
-           (setf next-article current-article)
-           current-article))))
+           (setf next-article current-article))))
+  (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
+                                           :direction :output
+                                           :if-exists :rename-and-delete
+                                           :if-does-not-exist :create)
+    (print article-listing new-cache-file)))
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"

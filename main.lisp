@@ -125,41 +125,39 @@
                                    content))
                    extra-environment-variables))))
 
-(defun create-article-listing (blog-directory)
+(defun create-article-listing (blog-directory article-cache)
   "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
-  (flet ((split-date (date-string) (split "-" (regex-replace-all "\\s" date-string ""))))
-    (sort (map 'list
-               (lambda (content-file-path)
-                 (with-open-file (content-file content-file-path)
-                   (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
-                     (if extracted-metadata
-                         (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
-                                (article-date (split-date (getf metadata-object :date-created))))
-                           ;;Two extra "attributes" we wish to add to the existing metadata we parsed
-                           (setf (getf metadata-object :file-path) content-file-path)
-                           (setf (getf metadata-object :date-created) (encode-timestamp 0 
-                                                                                        0 
-                                                                                        0 
+  (let* ((temp-article-listing (flet ((split-date (date-string) (split "-" (regex-replace-all "\\s" date-string ""))))
+                                 (map 'list
+                                      (lambda (content-file-path)
+                                        (with-open-file (content-file content-file-path)
+                                          (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
+                                            (if extracted-metadata
+                                                (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
+                                                       (article-date (split-date (getf metadata-object :date-created))))
+                                                  ;;Two extra "attributes" we wish to add to the existing metadata we parsed
+                                                  (setf (getf metadata-object :file-path) content-file-path)
+                                                  (setf (getf metadata-object :date-created) (encode-timestamp 0 
+                                                                                                               0 
+                                                                                                               0 
 
-                                                                                        0 
-                                                                                        (parse-integer (second article-date)) 
-                                                                                        (parse-integer (first article-date)) 
-                                                                                        (parse-integer (third article-date))))
-                           metadata-object)
-                         'nil))))
-               (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
+                                                                                                               0 
+                                                                                                               (parse-integer (second article-date)) 
+                                                                                                               (parse-integer (first article-date)) 
+                                                                                                               (parse-integer (third article-date))))
+                                                  metadata-object)
+                                                'nil))))
+                                      (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))))
+         (new-entries (set-difference temp-article-listing
+                                      article-cache
+                                      :key (lambda (metadata)
+                                             (namestring (getf metadata :file-path)))
+                                      :test #'string=)))
+    (sort (concatenate 'list
+                       article-cache
+                       new-entries)
           (lambda (article-metadata-one article-metadata-two)
             (timestamp>= (getf article-metadata-one :date-created) (getf article-metadata-two :date-created))))))
-
-;;This will be deprecated
-(defun create-cache (listing)
-  "Creates a plist with the structure (:filename (:content \"some_content\" :last-modified 123456)). This is usually run once with a newly created blog as it is called during the normal rendering process. The only other times it runs is either manually by the user or if the cache was somehow previously deleted"
-  (loop for item across listing
-     append (let ((file-path (getf item :file-path)))
-              `(,(make-keyword (file-namestring file-path))
-                 (:content
-                  ,(cadr (multiple-value-list (markdown file-path :stream nil)))
-                  :last-modified ,(file-write-date file-path))))))
 
 (defun retrieve-cached-content (file-path cache)
   "Returns a string representing the content of the given file path and a boolean representing whether or not the cache needs to be resaved and, if need be, a new cache. The string value returned is the result of one of three outcomes, first the content is new that does not exist in the cache (which is added to the current cache as a side effect), the content file has been modified since the cached time in which the newly rendered content replaces the old content and the new content is returned, and finally the content exists and is up to date to which the cached content is returned. A possible side effect of this function is that the content and last modified time for the cached content specified by the file-path may be changed if invalidated"
@@ -225,8 +223,9 @@
          (updated-article-listing nil)
          (newly-rendered-content (progn
                                    (ensure-directories-exist rendered-article-path)
-                                   (loop for current-article in article-listing and previous-article in (cdr article-listing) collect
-                                        (let ((current-slug (create-slug current-article)))
+                                   (loop for current-article in article-listing collect
+                                        (let ((current-slug (create-slug current-article))
+                                              (previous-article (cadr article-listing)))
                                           (with-open-file (outfile (merge-pathnames-as-file rendered-article-path (concatenate 'string current-slug ".html"))
                                                                    :direction :output 
                                                                    :if-exists :rename-and-delete
@@ -250,9 +249,10 @@
                                                                                                                    next-article-info
                                                                                                                    `(:date-created ,date-created)
                                                                                                                    `(:article-title ,(getf current-article :title))))))
+                                              (setf next-article current-article)
                                               (setf (getf current-article :last-modified)
                                                     (file-write-date (getf current-article :file-path)))))
-                                          (setf next-article current-article))))))
+                                          current-article)))))
     (if (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp")))
         (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
                                         :direction :output
@@ -336,30 +336,3 @@
                           outfile
                           :content-path (getf page :file-path)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))
-
-(defun render-all (blog-directory article-template article-cache archive-template page-template rss-template blog-title blog-description blog-url)
-  (flet ((get-first-article-path (the-articles)
-           (merge-pathnames-as-file *blog-directory*
-                                    "rendered/articles/"
-                                    (concatenate 'string (create-slug (aref the-articles 0)) ".html"))))
-         (let* ((articles (create-article-listing blog-directory))
-                (pages (create-page-listing blog-directory)))
-           (when (> (length articles) 0)
-             (progn (render-cached-content #'render-articles "article-cache.lisp" article-cache articles article-template blog-directory)
-                    (render-simple-archive articles archive-template blog-directory)
-                    (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)
-                    (render-rss-feed blog-directory rss-template blog-title blog-url blog-description articles)))
-           (when (> (length pages) 0)
-             (render-pages pages page-template blog-directory))
-           (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))
-
-(defun render-blog ()
-  (render-all *blog-directory*
-              *article-template*
-              *article-cache*
-              *archive-template*
-              *page-template*
-              *rss-feed-template*
-              *blog-title*
-              *blog-description*
-              *blog-url*))

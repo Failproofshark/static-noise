@@ -174,18 +174,6 @@
         (values (getf cache-entry :content)
                 nil))))
 
-;;This will be deprecated
-(defun render-cached-content (render-function cache-file-name cache listing template blog-directory)
-  "Render content that may be cached, return a cache which may have been updated, and save the new cache if it proven to be invalid as a side effect. The render-function is a function and the cache-file-name argument should be a string representing the file name that the cache will be written to."
-  (multiple-value-bind (cache should-write) (funcall render-function cache listing template blog-directory)
-    (when should-write
-      (with-open-file (cache-file (merge-pathnames-as-file blog-directory cache-file-name)
-                                  :direction :output
-                                  :if-exists :rename-and-delete
-                                  :if-does-not-exist :create)
-        (print cache cache-file))
-      cache)))
-
 (defun create-slug (metadata)
   "Creates a slug useful for creating page links and file names"
   (regex-replace-all "\\W"
@@ -212,7 +200,7 @@
          (content (or (and last-modified-date
                            (<= last-modified-date (file-write-date file-path))
                            (getf metadata :cached-content))
-                      (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil)
+                      (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
                         rendered-content))))
     content))
 
@@ -220,7 +208,6 @@
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let* ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
          (next-article nil)
-         (updated-article-listing nil)
          (newly-rendered-content (progn
                                    (ensure-directories-exist rendered-article-path)
                                    (loop for current-article in article-listing collect

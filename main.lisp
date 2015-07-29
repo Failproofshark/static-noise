@@ -27,6 +27,8 @@
 
 (defvar *server* (make-instance 'acceptor :port 8080))
 
+(declaim (optimize (debug 2)))
+
 (defun copy-directory (from-directory to-directory)
   (ensure-directories-exist to-directory)
   (walk-directory from-directory
@@ -197,16 +199,19 @@
 (defun render-or-retrieve-cache (metadata)
   (let* ((file-path (getf metadata :file-path))
          (last-modified-date (getf metadata :last-modified))
+         (cache-invalid nil)
          (content (or (and last-modified-date
-                           (<= last-modified-date (file-write-date file-path))
-                           (getf metadata :cached-content))
+                           (<= (file-write-date file-path) last-modified-date)
+                           (getf metadata :content))
                       (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
-                        rendered-content))))
-    content))
+                                           (setf cache-invalid t)
+                                           rendered-content))))
+    (values cache-invalid content)))
 
 (defun render-articles (article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let* ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
+         (write-new-cache nil)
          (next-article nil)
          (newly-rendered-content (progn
                                    (ensure-directories-exist rendered-article-path)
@@ -226,7 +231,9 @@
                                                        (list :previous-entry-title (getf previous-article :title)
                                                              :previous-entry (create-article-link (create-slug previous-article)))))
                                                   (date-created (split-date-components (getf current-article :date-created)))
-                                                  (content (render-or-retrieve-cache current-article)))
+                                                  (content (multiple-value-bind (is-cache-invalid the-content) (render-or-retrieve-cache current-article)
+                                                             (setf write-new-cache (or is-cache-invalid write-new-cache))
+                                                             the-content)))
                                               (setf (getf current-article :content)
                                                     content)
                                               (apply #'render-page (append `(,article-template
@@ -240,7 +247,7 @@
                                               (setf (getf current-article :last-modified)
                                                     (file-write-date (getf current-article :file-path)))))
                                           current-article)))))
-    (if (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp")))
+    (if (or write-new-cache (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp"))))
         (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
                                         :direction :output
                                         :if-exists :rename-and-delete

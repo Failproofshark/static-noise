@@ -135,40 +135,49 @@
 
 (defun create-article-listing (blog-directory article-cache)
   "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
-  (flet ((split-date (date-string) 
-                       (split "-" (regex-replace-all "\\s" date-string "")))
-                     (render-if-new (metadata)
-                       (let* ((file-path (getf metadata :file-path))
-                              (recorded-modified-date (getf metadata :last-modified))
-                              (last-write-date (file-write-date file-path))
-                              (old-content (getf metadata :content)))
-                         (or (and recorded-modified-date
-                                  (<= recorded-modified-date last-write-date)
-                                  old-content)
-                             (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
-                                                  rendered-content)))))
-                (map 'list
-                     (lambda (content-file-path)
-                       (with-open-file (content-file content-file-path)
-                         (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
-                           (if extracted-metadata
-                               (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
-                                      (article-date (split-date (getf metadata-object :date-created))))
-                                 ;;Two extra "attributes" we wish to add to the existing metadata we parsed
-                                 (setf (getf metadata-object :file-path) content-file-path)
-                                 (setf (getf metadata-object :date-created) (encode-timestamp 0 
-                                                                                              0 
-                                                                                              0 
-
-                                                                                              0 
-                                                                                              (parse-integer (second article-date)) 
-                                                                                              (parse-integer (first article-date)) 
-                                                                                              (parse-integer (third article-date))))
-                                 (setf (getf metadata-object :last-modified) (file-write-date (getf metadata-object :file-path)))
-                                 (setf (getf metadata-object :content) (render-if-new metadata-object))
-                                 metadata-object)
-                               'nil))))
-                     (list-directory (merge-pathnames-as-directory #p"/home/sp0k/source/common_lisp/test_blog/" #p"content/")))))
+  (labels ((split-date (date-string) 
+             (split "-" (regex-replace-all "\\s" date-string "")))
+           (render-if-new (metadata)
+             (let* ((file-path (getf metadata :file-path))
+                    (recorded-modified-date (getf metadata :last-modified))
+                    (last-write-date (file-write-date file-path))
+                    (old-content (getf metadata :content)))
+               (or (and recorded-modified-date
+                        (<= recorded-modified-date last-write-date)
+                        old-content)
+                   (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
+                                        rendered-content))))
+           (populate-metadata (metadata)
+             (with-open-file (content-file (getf metadata :file-path))
+               (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
+                 (if extracted-metadata
+                     (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
+                            (article-date (split-date (getf metadata-object :date-created))))
+                       (setf (getf metadata-object :file-path) (getf metadata :file-path))
+                       (setf (getf metadata-object :date-created) (encode-timestamp 0 
+                                                                                    0 
+                                                                                    0 
+                                                                                    0 
+                                                                                    (parse-integer (second article-date)) 
+                                                                                    (parse-integer (first article-date)) 
+                                                                                    (parse-integer (third article-date))))
+                       (setf (getf metadata-object :last-modified) (file-write-date (getf metadata-object :file-path)))
+                       (setf (getf metadata-object :content) (render-if-new metadata-object))
+                       metadata-object))))))
+    (let* ((new-entries (map 'list
+                             (lambda (metadata)
+                               (let ((newly-created-metadata (populate-metadata metadata)))
+                                 (setf (getf newly-created-metadata :mark-for-deletion) nil)
+                                 newly-created-metadata))
+                             (set-difference (map 'list
+                                                  (lambda (content-file-path)
+                                                    `(:file-path ,content-file-path))
+                                                  (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
+                                             article-cache
+                                             :key (lambda (metadata)
+                                                    (getf metadata :file-path))
+                                             :test #'string=))))
+      new-entries)))
 
 (defun retrieve-cached-content (file-path cache)
   "Returns a string representing the content of the given file path and a boolean representing whether or not the cache needs to be resaved and, if need be, a new cache. The string value returned is the result of one of three outcomes, first the content is new that does not exist in the cache (which is added to the current cache as a side effect), the content file has been modified since the cached time in which the newly rendered content replaces the old content and the new content is returned, and finally the content exists and is up to date to which the cached content is returned. A possible side effect of this function is that the content and last modified time for the cached content specified by the file-path may be changed if invalidated"

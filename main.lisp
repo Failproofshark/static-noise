@@ -133,6 +133,7 @@
 ;;                                            *blog-directory*)
 ;;                           *article-cache*))
 
+;;TODO run through current entries in article-cache to update
 (defun create-article-listing (blog-directory article-cache)
   "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
   (labels ((split-date (date-string) 
@@ -177,8 +178,11 @@
                                              :key (lambda (metadata)
                                                     (getf metadata :file-path))
                                              :test #'string=))))
-      new-entries)))
+      (sort new-entries
+            (lambda (entry-1 entry-2)
+              (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created)))))))
 
+;; Marked for depcrecation
 (defun retrieve-cached-content (file-path cache)
   "Returns a string representing the content of the given file path and a boolean representing whether or not the cache needs to be resaved and, if need be, a new cache. The string value returned is the result of one of three outcomes, first the content is new that does not exist in the cache (which is added to the current cache as a side effect), the content file has been modified since the cached time in which the newly rendered content replaces the old content and the new content is returned, and finally the content exists and is up to date to which the cached content is returned. A possible side effect of this function is that the content and last modified time for the cached content specified by the file-path may be changed if invalidated"
   (let* ((current-modified-time (file-write-date file-path))
@@ -213,7 +217,7 @@
                "/articles/"
                slug
                ".html"))
-
+;; TODO Marked for deprecation
 (defun render-or-retrieve-cache (metadata)
   (let* ((file-path (getf metadata :file-path))
          (last-modified-date (getf metadata :last-modified))

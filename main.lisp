@@ -232,7 +232,6 @@
 (defun render-articles (article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let* ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
-         (write-new-cache nil)
          (next-article nil)
          (newly-rendered-content (progn
                                    (ensure-directories-exist rendered-article-path)
@@ -251,15 +250,10 @@
                                                    (if previous-article
                                                        (list :previous-entry-title (getf previous-article :title)
                                                              :previous-entry (create-article-link (create-slug previous-article)))))
-                                                  (date-created (split-date-components (getf current-article :date-created)))
-                                                  (content (multiple-value-bind (is-cache-invalid the-content) (render-or-retrieve-cache current-article)
-                                                             (setf write-new-cache (or is-cache-invalid write-new-cache))
-                                                             the-content)))
-                                              (setf (getf current-article :content)
-                                                    content)
+                                                  (date-created (split-date-components (getf current-article :date-created))))
                                               (apply #'render-page (append `(,article-template
                                                                              ,outfile
-                                                                             :content ,content)
+                                                                             :content ,(getf current-article :content))
                                                                            `(:extra-environment-variables ,(append previous-article-info
                                                                                                                    next-article-info
                                                                                                                    `(:date-created ,date-created)
@@ -268,7 +262,7 @@
                                               (setf (getf current-article :last-modified)
                                                     (file-write-date (getf current-article :file-path)))))
                                           current-article)))))
-    (if (or write-new-cache (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp"))))
+    (unless (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp"))
         (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
                                         :direction :output
                                         :if-exists :rename-and-delete

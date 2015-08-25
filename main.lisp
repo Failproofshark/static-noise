@@ -176,9 +176,18 @@
                                                   (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
                                              article-cache
                                              :key (lambda (metadata)
-                                                    (getf metadata :file-path))
-                                             :test #'string=))))
-      (sort new-entries
+                                                    (namestring (getf metadata :file-path)))
+                                             :test #'string=)))
+           ;; TODO remove items marked for deletion
+           ;; TODO create check to determine if cache is invalid (updated metadata) in this method
+           (updated-cache (map 'list
+                               (lambda (metadata)
+                                 (if (>= (file-write-date (getf metadata :file-path)) (getf metadata :last-modified))
+                                     (populate-metadata metadata)
+                                     metadata))
+                               article-cache)))
+      ;; TODO check if cache is invalid or new-entries length > 0
+      (sort updated-cache
             (lambda (entry-1 entry-2)
               (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created)))))))
 

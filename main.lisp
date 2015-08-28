@@ -165,7 +165,8 @@
                        (setf (getf metadata-object :last-modified) (file-write-date (getf metadata-object :file-path)))
                        (setf (getf metadata-object :content) (render-if-new metadata-object))
                        metadata-object))))))
-    (let* ((new-entries (map 'list
+    (let* ((cache-invalid nil)
+           (new-entries (map 'list
                              (lambda (metadata)
                                (let ((newly-created-metadata (populate-metadata metadata)))
                                  (setf (getf newly-created-metadata :mark-for-deletion) nil)
@@ -178,40 +179,27 @@
                                              :key (lambda (metadata)
                                                     (namestring (getf metadata :file-path)))
                                              :test #'string=)))
-           ;; TODO create a variable to indicate cache is invalid
            (updated-cache (remove-if (lambda (metadata)
                                        (getf metadata :mark-for-deletion))
                                      (map 'list
                                           (lambda (metadata)
                                             (if (probe-file (getf metadata :file-path))
-                                                (if (>= (file-write-date (getf metadata :file-path)) (getf metadata :last-modified))
-                                                    (populate-metadata metadata)
+                                                (if (> (file-write-date (getf metadata :file-path)) (getf metadata :last-modified))
+                                                    (progn
+                                                      (setf cache-invalid t)
+                                                      (populate-metadata metadata))
                                                     metadata)
-                                                (progn (setf (getf metadata :mark-for-deletion) t)
-                                                       metadata)))
-                                          article-cache))))
-      ;; TODO check if cache is invalid or new-entries length > 0
-      (sort (concatenate 'list
+                                                (progn
+                                                  (setf (getf metadata :mark-for-deletion) t)
+                                                  (setf cache-invalid t)
+                                                  metadata)))
+                                          article-cache)))
+           (complete-cache (sort (concatenate 'list
                          new-entries
                          updated-cache)
             (lambda (entry-1 entry-2)
-              (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created)))))))
-
-;; Marked for depcrecation
-(defun retrieve-cached-content (file-path cache)
-  "Returns a string representing the content of the given file path and a boolean representing whether or not the cache needs to be resaved and, if need be, a new cache. The string value returned is the result of one of three outcomes, first the content is new that does not exist in the cache (which is added to the current cache as a side effect), the content file has been modified since the cached time in which the newly rendered content replaces the old content and the new content is returned, and finally the content exists and is up to date to which the cached content is returned. A possible side effect of this function is that the content and last modified time for the cached content specified by the file-path may be changed if invalidated"
-  (let* ((current-modified-time (file-write-date file-path))
-         (cache-keyword (make-keyword (file-namestring file-path)))
-         (cache-entry (getf cache cache-keyword)))
-    (if (or (not cache-entry)
-            (> current-modified-time (getf cache-entry :last-modified)))
-        (let ((new-data `(:content ,(cadr (multiple-value-list (markdown file-path :stream nil))) :last-modified ,current-modified-time)))
-          (setf (getf cache cache-keyword) new-data)
-          (values (getf new-data :content)
-                  t
-                  cache))
-        (values (getf cache-entry :content)
-                nil))))
+              (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created))))))
+      (values complete-cache (or (> (length new-entries) 0) cache-invalid)))))
 
 (defun create-slug (metadata)
   "Creates a slug useful for creating page links and file names"
@@ -232,17 +220,6 @@
                "/articles/"
                slug
                ".html"))
-;; TODO Marked for deprecation
-(defun render-or-retrieve-cache (metadata)
-  (let* ((file-path (getf metadata :file-path))
-         (last-modified-date (getf metadata :last-modified))
-         (cache-invalid nil)
-         (content (or (and (<= (file-write-date file-path) last-modified-date)
-                           (getf metadata :content))
-                      (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
-                                           (setf cache-invalid t)
-                                           rendered-content))))
-    (values cache-invalid content)))
 
 (defun render-articles (article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"

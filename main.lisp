@@ -272,7 +272,7 @@
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"
-  (loop for article across article-listing collect
+  (loop for article in article-listing collect
        (let* ((current-slug (create-slug article))
               (article-title (getf article :title))
               (creation-date-components (split-date-components (getf article :date-created))))

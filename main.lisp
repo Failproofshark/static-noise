@@ -201,6 +201,16 @@
               (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created))))))
       (values complete-cache (or (> (length new-entries) 0) cache-invalid)))))
 
+(defun write-articles-cache (blog-directory article-listing should-write-cache)
+  (when (or (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp")))
+            should-write-cache)
+    (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
+                                      :direction :output
+                                      :if-exists :rename-and-delete
+                                      :if-does-not-exist :create)
+      (print article-listing new-cache-file))
+    (setf *article-cache* article-listing)))
+
 (defun create-slug (metadata)
   "Creates a slug useful for creating page links and file names"
   (regex-replace-all "\\W"
@@ -253,13 +263,12 @@
                  (setf next-article current-article)
                  (setf (getf current-article :last-modified)
                        (file-write-date (getf current-article :file-path)))))
-             current-article)))
-    (unless (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp"))
-      (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "article-cache.lisp")
-                                      :direction :output
-                                      :if-exists :rename-and-delete
-                                      :if-does-not-exist :create)
-        (print article-listing new-cache-file)))))
+             current-article)))))
+
+(defun create-article-content (blog-directory article-cache article-template)
+  (multiple-value-bind (article-listing is-cache-invalid) (create-article-listing blog-directory article-cache)
+    (write-articles-cache blog-directory article-listing is-cache-invalid)
+    (render-articles article-listing article-template blog-directory)))
 
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"

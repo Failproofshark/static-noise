@@ -323,7 +323,7 @@
                                                             :blog-description ,blog-description
                                                             :last-build-date ,(format-to-rfc-822 (now))
                                                             :items)
-                                                          `(,(loop for article across article-listing
+                                                          `(,(loop for article in article-listing
                                                                 collect (append `(:title ,(getf article :title)
                                                                                          :description ,(cadr (multiple-value-list (markdown (getf article :file-path) :stream 'nil)))
                                                                                          :link ,(create-article-link (create-slug article) blog-url)

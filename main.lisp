@@ -394,5 +394,5 @@
                                     :if-does-not-exist :create)
              (render-page page-template
                           outfile
-                          :content-path (getf page :file-path)
+                          :content (getf page :content)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))

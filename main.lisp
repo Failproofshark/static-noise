@@ -342,6 +342,16 @@
                            updated-cache)
               (or cache-invalid (> (length new-entries) 0))))))
 
+(defun write-page-cache (blog-directory page-listing should-write-cache)
+  (when (or (not (file-exists-p (merge-pathnames-as-file blog-directory "page-cache.lisp")))
+            should-write-cache)
+    (with-open-file (new-cache-file (merge-pathnames-as-file blog-directory "page-cache.lisp")
+                                      :direction :output
+                                      :if-exists :rename-and-delete
+                                      :if-does-not-exist :create)
+      (print page-listing new-cache-file))
+    (setf *page-cache* page-listing)))
+
 (defun render-rss-feed (blog-directory rss-template blog-title blog-url blog-description article-listing)
   (flet ((format-to-rfc-822 (article-date)
            (let ((day-enum #("Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat"))

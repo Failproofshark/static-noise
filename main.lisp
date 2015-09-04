@@ -75,7 +75,8 @@
         (if (file-exists-p page-cache-file-path)
           (with-open-file (page-cache-file page-cache-file-path)
             (setf *page-cache* (read page-cache-file)))
-          nil))
+          nil)
+        (format t "Blog has been opened"))
       (format t "No configuration file found")))
 
 (defun create-blog (blog-directory-root blog-title blog-description blog-url)
@@ -127,7 +128,6 @@
                                    content))
                    extra-environment-variables))))
 
-;;TODO run through current entries in article-cache to update
 (defun create-article-listing (blog-directory article-cache)
   "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
   (labels ((split-date (date-string) 
@@ -396,3 +396,37 @@
                           outfile
                           :content (getf page :content)
                           :extra-environment-variables `(:page-title ,(getf page :title))))))))
+
+(defun render-all (blog-directory article-template article-cache archive-template page-template page-cache rss-template blog-title blog-description blog-url)
+  (flet ((get-first-article-path (the-articles)
+           (merge-pathnames-as-file blog-directory
+                                    "rendered/articles/"
+                                    (concatenate 'string (create-slug (first the-articles)) ".html")))
+         (create-listing-and-write-cache (listing-creation-function cache-writing-function current-cache)
+           (multiple-value-bind (listing is-invalid) (apply listing-creation-function `(,blog-directory ,current-cache))
+             (apply cache-writing-function `(,blog-directory ,listing ,is-invalid))
+             listing)))
+    (let* ((articles (create-listing-and-write-cache #'create-article-listing
+                                                     #'write-articles-cache
+                                                     article-cache))
+           (pages (create-listing-and-write-cache #'create-page-listing
+                                                  #'write-page-cache
+                                                  page-cache)))
+      (when (> (length articles) 0)
+        (render-articles articles
+                         article-template
+                         blog-directory)
+        (render-simple-archive articles
+                               archive-template
+                               blog-directory)
+        (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)
+        (render-rss-feed blog-directory rss-template
+                         blog-title
+                         blog-url
+                         blog-description
+                         articles))
+      (when (> (length pages) 0)
+        (render-pages pages
+                      page-template
+                      blog-directory))
+      (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))

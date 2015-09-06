@@ -128,11 +128,8 @@
                                    content))
                    extra-environment-variables))))
 
-(defun create-article-listing (blog-directory article-cache)
-  "Creates an array of plists containing a list of articles, their path name and their associated meta data sorted by the date they were created."
-  (labels ((split-date (date-string) 
-             (split "-" (regex-replace-all "\\s" date-string "")))
-           (render-if-new (metadata)
+(defun create-content-listing (extra-metadata-function the-cache blog-directory)
+  (labels ((render-if-new (metadata)
              (let* ((file-path (getf metadata :file-path))
                     (recorded-modified-date (getf metadata :last-modified))
                     (last-write-date (file-write-date file-path))
@@ -143,23 +140,16 @@
                    (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
                                         rendered-content))))
            (populate-metadata (metadata)
-             (with-open-file (content-file (getf metadata :file-path))
-               (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line content-file))))))
+             (with-open-file (page-file (getf metadata :file-path))
+               (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line page-file))))))
                  (if extracted-metadata
-                     (let* ((metadata-object (read (make-string-input-stream extracted-metadata)))
-                            (article-date (split-date (getf metadata-object :date-created))))
-                       ;; We need to set the file-path once again since we are creating a new metadata object with new data we're retrieving 
+                     (let* ((metadata-object (read (make-string-input-stream extracted-metadata))))
                        (setf (getf metadata-object :file-path) (getf metadata :file-path))
-                       (setf (getf metadata-object :date-created) (encode-timestamp 0 
-                                                                                    0 
-                                                                                    0 
-                                                                                    0 
-                                                                                    (parse-integer (second article-date)) 
-                                                                                    (parse-integer (first article-date)) 
-                                                                                    (parse-integer (third article-date))))
-                       (setf (getf metadata-object :last-modified) (file-write-date (getf metadata-object :file-path)))
+                       (setf (getf metadata-object :last-modified) (file-write-date (getf metadata :file-path)))
                        (setf (getf metadata-object :content) (render-if-new metadata-object))
-                       metadata-object))))))
+                       (apply extra-metadata-function `(,metadata))
+                       metadata-object)
+                     'nil)))))
     (let* ((cache-invalid nil)
            (new-entries (map 'list
                              (lambda (metadata)
@@ -170,7 +160,7 @@
                                                   (lambda (content-file-path)
                                                     `(:file-path ,content-file-path))
                                                   (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
-                                             article-cache
+                                             the-cache
                                              :key (lambda (metadata)
                                                     (namestring (getf metadata :file-path)))
                                              :test #'string=)))
@@ -189,13 +179,27 @@
                                                     (setf (getf new-metadata :mark-for-deletion) t)
                                                     (setf cache-invalid t)
                                                     new-metadata))))
-                                          article-cache)))
-           (complete-cache (sort (concatenate 'list
-                         new-entries
-                         updated-cache)
-            (lambda (entry-1 entry-2)
-              (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created))))))
-      (values complete-cache (or (> (length new-entries) 0) cache-invalid)))))
+                                          the-cache))))
+      (values (concatenate 'list
+                           new-entries
+                           updated-cache)
+              (or (> (length new-entries) 0) cache-invalid)))))
+
+(defun create-article-listing (blog-directory article-cache)
+  (sort (create-content-listing (lambda (metadata)
+                                  (let ((article-date (split "-" (regex-replace-all "\\s" (getf metadata :date_created) ""))))
+                                    (setf (getf metadata :date-created) (encode-timestamp 0 
+                                                                                          0 
+                                                                                          0 
+                                                                                          0 
+                                                                                          (parse-integer (second article-date)) 
+                                                                                          (parse-integer (first article-date)) 
+                                                                                          (parse-integer (third article-date))))
+                                    metadata))
+                                article-cache
+                                blog-directory)
+        (lambda (entry-1 entry-2)
+          (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created)))))
 
 (defun write-articles-cache (blog-directory article-listing should-write-cache)
   (when (or (not (file-exists-p (merge-pathnames-as-file blog-directory "article-cache.lisp")))

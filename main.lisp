@@ -261,11 +261,6 @@
                        (file-write-date (getf current-article :file-path)))))
              current-article)))))
 
-(defun create-article-content (blog-directory article-cache article-template)
-  (multiple-value-bind (article-listing is-cache-invalid) (create-article-listing blog-directory article-cache)
-    (write-articles-cache blog-directory article-listing is-cache-invalid)
-    (render-articles article-listing article-template blog-directory)))
-
 (defun create-archive-metadata (article-listing)
   "Extracts data relavant for an archive page from a more complete metadata set"
   (loop for article in article-listing collect

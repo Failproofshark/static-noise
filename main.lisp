@@ -430,3 +430,15 @@
                       page-template
                       blog-directory))
       (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))
+
+(defun render-blog ()
+  (render-all *blog-directory*
+              *article-template*
+              *article-cache*
+              *archive-template*
+              *page-template*
+              *page-cache*
+              *rss-feed-template*
+              *blog-title*
+              *blog-description*
+              *blog-url*))

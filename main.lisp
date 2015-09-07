@@ -128,7 +128,7 @@
                                    content))
                    extra-environment-variables))))
 
-(defun create-content-listing (extra-metadata-function the-cache blog-directory)
+(defun create-content-listing (the-cache content-directory &optional extra-metadata-function)
   (labels ((render-if-new (metadata)
              (let* ((file-path (getf metadata :file-path))
                     (recorded-modified-date (getf metadata :last-modified))
@@ -147,7 +147,8 @@
                        (setf (getf metadata-object :file-path) (getf metadata :file-path))
                        (setf (getf metadata-object :last-modified) (file-write-date (getf metadata :file-path)))
                        (setf (getf metadata-object :content) (render-if-new metadata-object))
-                       (apply extra-metadata-function `(,metadata))
+                       (when extra-metadata-function
+                         (apply extra-metadata-function `(,metadata)))
                        metadata-object)
                      'nil)))))
     (let* ((cache-invalid nil)
@@ -159,7 +160,7 @@
                              (set-difference (map 'list
                                                   (lambda (content-file-path)
                                                     `(:file-path ,content-file-path))
-                                                  (list-directory (merge-pathnames-as-directory blog-directory #p"content/")))
+                                                  (list-directory content-directory))
                                              the-cache
                                              :key (lambda (metadata)
                                                     (namestring (getf metadata :file-path)))
@@ -186,7 +187,9 @@
               (or (> (length new-entries) 0) cache-invalid)))))
 
 (defun create-article-listing (blog-directory article-cache)
-  (sort (create-content-listing (lambda (metadata)
+  (sort (create-content-listing article-cache
+                                (merge-pathnames-as-directory blog-directory #p"content/")
+                                (lambda (metadata)
                                   (let ((article-date (split "-" (regex-replace-all "\\s" (getf metadata :date_created) ""))))
                                     (setf (getf metadata :date-created) (encode-timestamp 0 
                                                                                           0 
@@ -195,9 +198,7 @@
                                                                                           (parse-integer (second article-date)) 
                                                                                           (parse-integer (first article-date)) 
                                                                                           (parse-integer (third article-date))))
-                                    metadata))
-                                article-cache
-                                blog-directory)
+                                    metadata)))
         (lambda (entry-1 entry-2)
           (timestamp>= (getf entry-1 :date-created) (getf entry-2 :date-created)))))
 
@@ -286,60 +287,7 @@
                  :extra-environment-variables `(:articles ,(create-archive-metadata article-listing)))))
 
 (defun create-page-listing (blog-directory page-cache)
-  (labels ((render-if-new (metadata)
-             (let* ((file-path (getf metadata :file-path))
-                    (recorded-modified-date (getf metadata :last-modified))
-                    (last-write-date (file-write-date file-path))
-                    (old-content (getf metadata :content)))
-               (or (and recorded-modified-date
-                        (<= recorded-modified-date last-write-date)
-                        old-content)
-                   (multiple-value-bind (doc rendered-content) (markdown file-path :stream 'nil) (declare (ignore doc))
-                                        rendered-content))))
-           (populate-metadata (metadata)
-             (with-open-file (page-file (getf metadata :file-path))
-               (let ((extracted-metadata (car (multiple-value-list (scan-to-strings "\\(.*\\)" (read-line page-file))))))
-                 (if extracted-metadata
-                     (let* ((metadata-object (read (make-string-input-stream extracted-metadata))))
-                       (setf (getf metadata-object :file-path) (getf metadata :file-path))
-                       (setf (getf metadata-object :last-modified) (file-write-date (getf metadata :file-path)))
-                       (setf (getf metadata-object :content) (render-if-new metadata-object))                      
-                       metadata-object)
-                     'nil)))))
-    (let* ((cache-invalid nil)
-           (new-entries (map 'list
-                             (lambda (metadata)
-                               (let ((newly-created-metadata (populate-metadata metadata)))
-                                 (setf (getf newly-created-metadata :mark-for-deletion) nil)
-                                 newly-created-metadata))
-                             (set-difference (map 'list
-                                                  (lambda (content-file-path)
-                                                    `(:file-path ,content-file-path))
-                                                  (list-directory (merge-pathnames-as-directory blog-directory #p"pages/")))
-                                             page-cache
-                                             :key (lambda (metadata)
-                                                    (namestring (getf metadata :file-path)))
-                                             :test #'string=)))
-           (updated-cache (remove-if (lambda (metadata)
-                                       (getf metadata :mark-for-deletion))
-                                     (map 'list
-                                          (lambda (metadata)
-                                            (let ((new-metadata (copy-list metadata)))
-                                              (if (probe-file (getf new-metadata :file-path))
-                                                  (if (> (file-write-date (getf new-metadata :file-path)) (getf new-metadata :last-modified))
-                                                      (progn
-                                                        (setf cache-invalid t)
-                                                        (populate-metadata new-metadata))
-                                                      new-metadata)
-                                                  (progn
-                                                    (setf (getf new-metadata :mark-for-deletion) t)
-                                                    (setf cache-invalid t)
-                                                    new-metadata))))
-                                          page-cache))))
-      (values (concatenate 'list
-                           new-entries
-                           updated-cache)
-              (or cache-invalid (> (length new-entries) 0))))))
+  (create-content-listing page-cache (merge-pathnames-as-directory blog-directory #p"pages/")))
 
 (defun write-page-cache (blog-directory page-listing should-write-cache)
   (when (or (not (file-exists-p (merge-pathnames-as-file blog-directory "page-cache.lisp")))

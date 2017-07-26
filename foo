@@ -1,0 +1,27 @@
+
+(defun render-all (blog-directory article-template article-cache archive-template page-template rss-template blog-title blog-description blog-url)
+  (flet ((get-first-article-path (the-articles)
+           (merge-pathnames-as-file *blog-directory*
+                                    "rendered/articles/"
+                                    (concatenate 'string (create-slug (aref the-articles 0)) ".html"))))
+         (let* ((articles (create-article-listing blog-directory))
+                (pages (create-page-listing blog-directory)))
+           (when (> (length articles) 0)
+             (progn (render-cached-content #'render-articles "article-cache.lisp" article-cache articles article-template blog-directory)
+                    (render-simple-archive articles archive-template blog-directory)
+                    (copy-file (get-first-article-path articles) (merge-pathnames-as-file blog-directory "rendered/index.html") :overwrite t)
+                    (render-rss-feed blog-directory rss-template blog-title blog-url blog-description articles)))
+           (when (> (length pages) 0)
+             (render-pages pages page-template blog-directory))
+           (copy-directory (merge-pathnames-as-directory blog-directory "static/") (merge-pathnames-as-directory blog-directory "rendered/" "static/")))))
+
+(defun render-blog ()
+  (render-all *blog-directory*
+              *article-template*
+              *article-cache*
+              *archive-template*
+              *page-template*
+              *rss-feed-template*
+              *blog-title*
+              *blog-description*
+              *blog-url*))

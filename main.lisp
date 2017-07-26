@@ -148,7 +148,7 @@
                        (setf (getf metadata-object :last-modified) (file-write-date (getf metadata :file-path)))
                        (setf (getf metadata-object :content) (render-if-new metadata-object))
                        (when extra-metadata-function
-                         (apply extra-metadata-function `(,metadata)))
+                         (apply extra-metadata-function `(,metadata-object)))
                        metadata-object)
                      'nil)))))
     (let* ((cache-invalid nil)
@@ -190,7 +190,7 @@
   (sort (create-content-listing article-cache
                                 (merge-pathnames-as-directory blog-directory #p"content/")
                                 (lambda (metadata)
-                                  (let ((article-date (split "-" (regex-replace-all "\\s" (getf metadata :date_created) ""))))
+                                  (let ((article-date (split "-" (regex-replace-all "\\s" (getf metadata :date-created) ""))))
                                     (setf (getf metadata :date-created) (encode-timestamp 0 
                                                                                           0 
                                                                                           0 

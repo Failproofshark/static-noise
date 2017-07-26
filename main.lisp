@@ -235,12 +235,13 @@
 (defun render-articles (article-listing article-template blog-directory)
   "Returns the array of articles listed so methods could be chained. The point of interest is it's side effect which fills the rendered/articles directory within the blog directory with the rendered articles (and creates the sub directories if they do not already exist"
   (let* ((rendered-article-path (merge-pathnames-as-directory blog-directory "rendered/articles/"))
-         (next-article nil))
+         (next-article nil)
+         (previous-article-stack (cdr article-listing)))
     (progn
       (ensure-directories-exist rendered-article-path)
       (loop for current-article in article-listing collect
-           (let ((current-slug (create-slug current-article))
-                 (previous-article (cadr article-listing)))
+        (let ((current-slug (create-slug current-article))
+              (previous-article (car previous-article-stack)))
              (with-open-file (outfile (merge-pathnames-as-file rendered-article-path (concatenate 'string current-slug ".html"))
                                       :direction :output 
                                       :if-exists :rename-and-delete
@@ -261,6 +262,7 @@
                                                                                       next-article-info
                                                                                       `(:date-created ,date-created)
                                                                                       `(:article-title ,(getf current-article :title))))))
+                 (setf previous-article-stack (cdr previous-article-stack))
                  (setf next-article current-article)
                  (setf (getf current-article :last-modified)
                        (file-write-date (getf current-article :file-path)))))
